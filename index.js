@@ -1,13 +1,6 @@
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
-const fs = require('fs');
 const path = require('path');
-
-// Create an output directory for HLS segments
-const outputDir = 'hls';
-if (!fs.existsSync(outputDir)){
-    fs.mkdirSync(outputDir);
-}
 
 (async () => {
     const browser = await chromium.launch();
@@ -15,9 +8,7 @@ if (!fs.existsSync(outputDir)){
     await page.goto('http://sportshub:Dontbeadick!@sportshub.hopto.org/SHUB/fixtures/creator/tools/fixtureschannel/live.php'); // Replace with your URL
     await page.setViewportSize({ width: 1920, height: 1080 });
 
-
-
-    // Spawn ffmpeg process to create an HLS stream
+    const outputDir = './output'; // Define your output directory here
     const ffmpeg = spawn('ffmpeg', [
         '-f', 'image2pipe',
         '-framerate', '30',
@@ -32,33 +23,48 @@ if (!fs.existsSync(outputDir)){
         path.join(outputDir, 'playlist.m3u8') // Output playlist file
     ]);
 
+    ffmpeg.stderr.on('data', (data) => {
+        console.error(`ffmpeg stderr: ${data}`);
+    });
+
+    ffmpeg.on('close', (code) => {
+        console.log(`ffmpeg process exited with code ${code}`);
+    });
+
+    ffmpeg.on('error', (err) => {
+        console.error('Error with ffmpeg process:', err);
+    });
+
     let lastScreenshotBuffer = null;
 
     const captureScreenshot = async () => {
         try {
             const screenshotBuffer = await page.screenshot({ encoding: 'binary' });
             if (screenshotBuffer.length > 0) {
-                lastScreenshotBuffer = screenshotBuffer
+                lastScreenshotBuffer = screenshotBuffer;
             }
         } catch (err) {
             console.error('Error capturing screenshot:', err);
         }
     };
-    const startCapturing = async () => {
-        while (true) {
-            await captureScreenshot();
-            // Wait for the next screenshot, adjust delay as needed
-            await new Promise(resolve => setTimeout(resolve, 100)); // Adjust delay according to your screen generation time
-        }
-    };
 
-    startCapturing();
-    // Capture screenshots and stream them to ffmpeg
-    while (true) {
+    // Capture screenshots at intervals
+    const screenshotInterval = setInterval(captureScreenshot, 100);
+
+    // Write screenshots to ffmpeg
+    const streamInterval = setInterval(() => {
         if (lastScreenshotBuffer) {
             ffmpeg.stdin.write(lastScreenshotBuffer);
         }
-        await new Promise(resolve => setTimeout(resolve, 30)); // Adjust delay according to your screen generation time
-    }
-})();
+    }, 30);
 
+    // Gracefully handle shutdown
+    process.on('SIGINT', async () => {
+        console.log('Caught interrupt signal');
+        clearInterval(screenshotInterval);
+        clearInterval(streamInterval);
+        await browser.close();
+        ffmpeg.stdin.end();
+        process.exit();
+    });
+})();

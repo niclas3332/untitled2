@@ -1,6 +1,13 @@
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
+
+// Create an output directory for HLS segments
+const outputDir = 'hls';
+if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir);
+}
 
 (async () => {
     const browser = await chromium.launch();
@@ -8,7 +15,7 @@ const path = require('path');
     await page.goto('http://sportshub:Dontbeadick!@sportshub.hopto.org/SHUB/fixtures/creator/tools/fixtureschannel/live.php'); // Replace with your URL
     await page.setViewportSize({ width: 1920, height: 1080 });
 
-    const outputDir = './output'; // Define your output directory here
+    // Spawn ffmpeg process to create an HLS stream
     const ffmpeg = spawn('ffmpeg', [
         '-f', 'image2pipe',
         '-framerate', '30',
@@ -23,6 +30,7 @@ const path = require('path');
         path.join(outputDir, 'playlist.m3u8') // Output playlist file
     ]);
 
+    // Capture ffmpeg errors and log them
     ffmpeg.stderr.on('data', (data) => {
         console.error(`ffmpeg stderr: ${data}`);
     });
@@ -48,21 +56,26 @@ const path = require('path');
         }
     };
 
-    // Capture screenshots at intervals
-    const screenshotInterval = setInterval(captureScreenshot, 100);
+    const startCapturing = async () => {
+        while (true) {
+            await captureScreenshot();
+            await new Promise(resolve => setTimeout(resolve, 100)); // Adjust delay according to your screen generation time
+        }
+    };
 
-    // Write screenshots to ffmpeg
-    const streamInterval = setInterval(() => {
+    startCapturing();
+
+    // Capture screenshots and stream them to ffmpeg
+    while (true) {
         if (lastScreenshotBuffer) {
             ffmpeg.stdin.write(lastScreenshotBuffer);
         }
-    }, 30);
+        await new Promise(resolve => setTimeout(resolve, 30)); // Adjust delay according to your screen generation time
+    }
 
     // Gracefully handle shutdown
     process.on('SIGINT', async () => {
         console.log('Caught interrupt signal');
-        clearInterval(screenshotInterval);
-        clearInterval(streamInterval);
         await browser.close();
         ffmpeg.stdin.end();
         process.exit();
